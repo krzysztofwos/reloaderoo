@@ -343,7 +343,13 @@ export class MCPProxy {
         this.childTools = r.tools || [];
         this.toolHandler.updateChildTools(this.childTools);
       } catch (error) {
-        logger.warn('Failed to refresh child tools after list_changed', { error });
+        // If we can't refresh the cache (e.g. the child transport was closed
+        // mid-restart), skip the upstream forward. Forwarding with a stale or
+        // empty cache would make the parent re-fetch and see wrong data; the
+        // restart path's own notifyCapabilityChanges() will notify the parent
+        // once the new mirror completes.
+        logger.warn('Failed to refresh child tools after list_changed; skipping upstream forward', { error });
+        return;
       }
       try {
         await this.server.notification({
