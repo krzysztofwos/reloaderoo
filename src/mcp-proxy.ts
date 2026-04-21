@@ -14,12 +14,15 @@ import {
   // Tools
   ListToolsRequestSchema,
   CallToolRequestSchema,
-  // Prompts  
+  ToolListChangedNotificationSchema,
+  // Prompts
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
+  PromptListChangedNotificationSchema,
   // Resources
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ResourceListChangedNotificationSchema,
   // Completion
   CompleteRequestSchema,
   // Sampling
@@ -171,6 +174,10 @@ export class MCPProxy {
     // Connect to child via stdio
     await this.childClient.connect(this.childTransport);
 
+    // Forward dynamic capability-change notifications from the child upstream,
+    // refreshing the local cache so the next list-* request reflects the new set.
+    this.registerChildNotificationForwarders();
+
     // Try to access child process for stderr capture
     try {
       // Check if transport exposes stderr stream
@@ -315,6 +322,56 @@ export class MCPProxy {
     } catch (error) {
       logger.debug('Error sending notifications', { error });
     }
+  }
+
+  /**
+   * Subscribe to dynamic capability-change notifications from the child server.
+   * When the child registers or removes a tool (or resource/prompt) at runtime,
+   * refresh the corresponding cache and forward the notification upstream so
+   * the parent client can re-discover.
+   */
+  private registerChildNotificationForwarders(): void {
+    if (!this.childClient) return;
+
+    this.childClient.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      logger.debug('child sent tools/list_changed; refreshing cache', undefined, 'RELOADEROO');
+      try {
+        const r = await this.childClient!.listTools();
+        this.childTools = r.tools || [];
+        this.toolHandler.updateChildTools(this.childTools);
+      } catch (error) {
+        logger.warn('Failed to refresh child tools after list_changed', { error });
+      }
+      try {
+        await this.server.notification({
+          method: MCP_PROTOCOL.NOTIFICATIONS.TOOLS_LIST_CHANGED
+        });
+      } catch (error) {
+        logger.debug('Failed to forward tools/list_changed upstream', { error });
+      }
+    });
+
+    this.childClient.setNotificationHandler(ResourceListChangedNotificationSchema, async () => {
+      logger.debug('child sent resources/list_changed; forwarding', undefined, 'RELOADEROO');
+      try {
+        await this.server.notification({
+          method: MCP_PROTOCOL.NOTIFICATIONS.RESOURCES_LIST_CHANGED
+        });
+      } catch (error) {
+        logger.debug('Failed to forward resources/list_changed upstream', { error });
+      }
+    });
+
+    this.childClient.setNotificationHandler(PromptListChangedNotificationSchema, async () => {
+      logger.debug('child sent prompts/list_changed; forwarding', undefined, 'RELOADEROO');
+      try {
+        await this.server.notification({
+          method: MCP_PROTOCOL.NOTIFICATIONS.PROMPTS_LIST_CHANGED
+        });
+      } catch (error) {
+        logger.debug('Failed to forward prompts/list_changed upstream', { error });
+      }
+    });
   }
 
   /**
