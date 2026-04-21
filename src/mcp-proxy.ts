@@ -174,10 +174,6 @@ export class MCPProxy {
     // Connect to child via stdio
     await this.childClient.connect(this.childTransport);
 
-    // Forward dynamic capability-change notifications from the child upstream,
-    // refreshing the local cache so the next list-* request reflects the new set.
-    this.registerChildNotificationForwarders();
-
     // Try to access child process for stderr capture
     try {
       // Check if transport exposes stderr stream
@@ -219,6 +215,13 @@ export class MCPProxy {
 
     // Mirror child capabilities
     await this.mirrorChildCapabilities();
+
+    // Register handlers for the child's dynamic list-changed notifications only
+    // after the initial mirror completes. On restart, mirrorChildCapabilities()
+    // calls notifyCapabilityChanges() which forwards a single tools/list_changed
+    // upstream; if we registered earlier, a list_changed emitted by the child
+    // during our listTools() round-trip would cause a duplicate forward.
+    this.registerChildNotificationForwarders();
 
     logger.info('Connected to child MCP server successfully');
   }
